@@ -6,7 +6,18 @@ is the agreement those functions have to keep.
 
 from __future__ import annotations
 
-from shared.constants import NEGATIVE_SARCASM, POSITIVE_SARCASM, SARCASM_LABELS
+from shared.constants import (
+    AUDIO_HIDDEN,
+    CONTEXT_HIDDEN,
+    FUSION_LOGITS,
+    NEGATIVE_SARCASM,
+    POSITIVE_SARCASM,
+    PROSODY_DIM,
+    QUALITY_DIM,
+    SARCASM_LABELS,
+    TARGET_SAMPLE_RATE,
+    TEXT_HIDDEN,
+)
 from shared.errors import DatasetSchemaError
 
 
@@ -37,20 +48,20 @@ def sarcasm_name(label: int) -> str:
     return SARCASM_LABELS[label]
 
 
-# Interface the four modules share. Shapes are batch-first.
+# Interface contract for member modules. Shapes are batch-first.
 #
 # encode_text(text, context=None) ->
-#   utterance_embeddings: float32[B, L, 768]
+#   utterance_embeddings: float32[B, L, TEXT_HIDDEN]
 #   utterance_mask: bool[B, L]          True where a token is real
-#   context_embeddings: float32[B, C, 768] | None
+#   context_embeddings: float32[B, C, CONTEXT_HIDDEN] | None
 #   context_mask: bool[B, C] | None
-#   pooled_utterance: float32[B, 768]
+#   pooled_utterance: float32[B, TEXT_HIDDEN]
 #
 # get_audio_embedding(audio_path) ->
-#   frame_embeddings: float32[1, F, 768]
+#   frame_embeddings: float32[1, F, AUDIO_HIDDEN]
 #   frame_mask: bool[1, F]
-#   utterance_embedding: float32[1, 768]
-#   sample_rate: 16000
+#   utterance_embedding: float32[1, AUDIO_HIDDEN]
+#   sample_rate_hz: TARGET_SAMPLE_RATE
 #
 # extract_audio_features(audio_path) ->
 #   prosody: float32[PROSODY_DIM]
@@ -70,10 +81,10 @@ def sarcasm_name(label: int) -> str:
 #   transcript_is_ground_truth: bool
 #   asr_confidence: float | None
 INTERFACE_SUMMARY = {
-    "text_embeddings": "[B, L, 768]",
-    "audio_embeddings": "[B, F, 768]",
-    "context_embeddings": "[B, C, 768]",
-    "prosody": "[B, P]",
-    "quality": "[B, Q]",
-    "fusion_logits": "[B, 2]",
+    "text_embeddings": f"[B, L, {TEXT_HIDDEN}]",
+    "audio_embeddings": f"[B, F, {AUDIO_HIDDEN}]",
+    "context_embeddings": f"[B, C, {CONTEXT_HIDDEN}]",
+    "prosody": f"[B, {PROSODY_DIM}]",
+    "quality": f"[B, {QUALITY_DIM}]",
+    "fusion_logits": f"[B, {FUSION_LOGITS}]",
 }

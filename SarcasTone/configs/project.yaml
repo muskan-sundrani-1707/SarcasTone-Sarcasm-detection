@@ -1,4 +1,4 @@
-project_name: arcasTone
+project_name: SarcasTone
 seed: 42
 python: "3.11"
 framework: pytorch

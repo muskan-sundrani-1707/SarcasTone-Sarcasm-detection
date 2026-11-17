@@ -1,6 +1,6 @@
 # Datasets
 
-arcasTone trains the sarcasm classifier on sarcasm-labelled speech and uses other corpora only for the auxiliary task each one actually annotates.
+SarcasTone trains the sarcasm classifier on sarcasm-labelled speech and uses other corpora only for the auxiliary task each one actually annotates.
 
 | Dataset | Role | What this repo downloads |
 | --- | --- | --- |

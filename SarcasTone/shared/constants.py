@@ -1,8 +1,8 @@
 """Shared tensor, label, and feature contracts.
 
 Projection layers in each module must convert native encoder widths into
-these sizes. Do not change a value here without updating
-``configs/interface_contract.yaml`` and the other three modules.
+these sizes. Keep ``configs/interface_contract.yaml`` in sync when changing a
+dimension, sample rate, or label.
 """
 
 from __future__ import annotations

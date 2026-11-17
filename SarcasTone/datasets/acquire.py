@@ -86,7 +86,7 @@ CMU-MOSEI
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download arcasTone annotations")
+    parser = argparse.ArgumentParser(description="Download SarcasTone annotations")
     parser.add_argument("--annotations", action="store_true", help="MUStARD and MUStARD++ text")
     parser.add_argument("--semeval", action="store_true", help="SemEval-2018 Task 3 task A text")
     parser.add_argument("--list-manual", action="store_true", help="Print audio/video instructions")
