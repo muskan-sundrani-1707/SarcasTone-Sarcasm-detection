@@ -1,0 +1,18 @@
+{
+    "model": "SVM RBF",
+    "C": 10.0,
+    "gamma": 0.001,
+    "accuracy": 0.43333333333333335,
+    "macro_f1": 0.4123858839353974,
+    "weighted_f1": 0.4236181135961312,
+    "balanced_accuracy": 0.42578125,
+    "training_plus_validation_samples": 1200,
+    "test_samples": 240,
+    "test_actors": [
+        1,
+        9,
+        17,
+        19
+    ],
+    "feature_count": 116
+}
