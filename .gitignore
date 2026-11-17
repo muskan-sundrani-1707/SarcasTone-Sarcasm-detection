@@ -1,0 +1,23 @@
+
+# Raw datasets: do not upload large research datasets
+member2_audio/data/raw/
+member2_audio/data/processed/
+
+# Model checkpoints
+member2_audio/checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Python cache
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# ML experiment tracking
+mlruns/
