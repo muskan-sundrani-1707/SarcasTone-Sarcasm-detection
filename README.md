@@ -72,3 +72,5 @@ Sarcastic / Non-Sarcastic
 
 Confidence + explanation + modality contribution
 
+
+SarcasTone-Sarcasm-detecton-model
