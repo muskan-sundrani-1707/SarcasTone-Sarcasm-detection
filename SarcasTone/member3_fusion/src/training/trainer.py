@@ -2,7 +2,7 @@
 
 Responsibilities
 ----------------
-* Build data splits from member2 handoff + MUStARD JSON.
+* Build data splits from member2 handoff + MUStARD JSON (+ optional MUStARD++).
 * Build the fusion model from config.
 * Run AdamW + cosine LR schedule with linear warmup.
 * Gradient clipping + early stopping.
@@ -11,6 +11,8 @@ Responsibilities
 * Checkpoint saving/resumption.
 * Per-epoch metric logging (accuracy, macro-F1, weighted-F1).
 * Full reproducibility via seed setting.
+* Temperature calibration fitted on validation logits after training.
+* Modality availability validated before training starts.
 
 Encoder fine-tuning policy
 ---------------------------
@@ -20,6 +22,15 @@ Epoch unfreeze_audio_epoch:          audio projection unfrozen.
 
 For MUStARD (N≈470 train examples), full encoder fine-tuning is too aggressive
 without very low LR. The progressive schedule prevents catastrophic forgetting.
+
+Fixes applied vs. the original
+-------------------------------
+* Scheduler total_steps calculated from actual DataLoader length, not a hardcoded 50.
+* Calibration (temperature fitting) is always run after training, on val logits.
+* validate_modality_availability() called before training starts.
+* Cached text embeddings (text_embedding tensor) are used when no live encoder.
+* Experiment override flags (psid_enabled, gating_enabled, fusion_strategy)
+  from the config model block are always forwarded to build_model.
 """
 from __future__ import annotations
 
@@ -53,9 +64,11 @@ from src.training.dataset import (
     FusionRecord,
     collate_fn,
     load_mustard_fusion_records,
+    validate_modality_availability,
     ACOUSTIC_FEATURE_COLS,
 )
 from src.models.fusion_model import SarcasToneFusionModel, build_fusion_model
+from src.uncertainty.calibration import fit_temperature
 
 log = logging.getLogger(__name__)
 
@@ -103,9 +116,9 @@ def compute_class_weights(
     records: list[FusionRecord], device: torch.device
 ) -> torch.Tensor:
     labels = np.array([r.label for r in records])
-    n_total = len(labels)
+    n_total  = len(labels)
     n_classes = 2
-    weights = np.zeros(n_classes, dtype=np.float32)
+    weights  = np.zeros(n_classes, dtype=np.float32)
     for c in range(n_classes):
         count = (labels == c).sum()
         weights[c] = n_total / (n_classes * max(count, 1))
@@ -117,7 +130,7 @@ def compute_class_weights(
 
 
 # ---------------------------------------------------------------------------
-# Batch processing (without text encoder — uses pre-extracted embeddings)
+# Batch processing
 # ---------------------------------------------------------------------------
 
 def run_batch(
@@ -128,13 +141,15 @@ def run_batch(
 ) -> dict[str, torch.Tensor]:
     """Move batch to device and run model forward.
 
-    If text_encoder is not None and available, it encodes the texts.
-    Otherwise, text embeddings are zeros (text-unavailable mode).
+    Text encoding priority:
+      1. Live text_encoder (member1 SpanPoolingModel), if available.
+      2. Cached text_embedding tensors from the dataset batch.
+      3. Zero embeddings (text-unavailable ablation / training without text).
     """
-    # Move all tensors to device
     tensor_keys = [
         "audio_embedding", "audio_available",
-        "prosody", "acoustic_full", "quality", "quality_ok", "label"
+        "prosody", "acoustic_full", "quality", "quality_ok",
+        "text_embedding", "text_available", "label",
     ]
     device_batch = {k: batch[k].to(device) for k in tensor_keys if k in batch}
     device_batch["texts"]       = batch["texts"]
@@ -144,22 +159,33 @@ def run_batch(
 
     B = device_batch["audio_embedding"].size(0)
 
-    # Text embeddings
     text_emb = None
     ctx_emb  = None
     has_ctx  = None
 
+    # Priority 1: live text encoder
     if text_encoder is not None and text_encoder.is_available:
         try:
             te_out = text_encoder(
                 device_batch["texts"],
                 device_batch["contexts"],
             )
-            text_emb = te_out["utterance"]
-            ctx_emb  = te_out["context"]
-            has_ctx  = te_out["has_context"]
+            text_emb = te_out["utterance"]   # [B, TEXT_HIDDEN]
+            ctx_emb  = te_out["context"]     # [B, TEXT_HIDDEN]
+            has_ctx  = te_out["has_context"] # [B] bool
         except Exception as e:
-            log.warning("Text encoder failed: %s", e)
+            log.warning("Text encoder failed: %s; falling back to cached embeddings", e)
+
+    # Priority 2: cached embeddings from dataset
+    if text_emb is None and "text_embedding" in device_batch:
+        text_avail_mask = device_batch["text_available"]   # [B] bool
+        if text_avail_mask.any():
+            text_emb = device_batch["text_embedding"]      # [B, TEXT_HIDDEN]
+            # Zero out positions where text is unavailable
+            text_emb = text_emb * text_avail_mask.float().unsqueeze(-1)
+            # has_context defaults to no context (context handled separately)
+            has_ctx = torch.zeros(B, dtype=torch.bool, device=device)
+            ctx_emb = None
 
     return model(
         device_batch,
@@ -188,16 +214,16 @@ def train_epoch(
 ) -> dict[str, float]:
     model.train()
     total_loss = 0.0
-    all_preds = []
+    all_preds  = []
     all_labels = []
-    all_probs = []
+    all_probs  = []
 
     for step, batch in enumerate(loader):
         optimiser.zero_grad()
 
         if scaler is not None:
             with torch.cuda.amp.autocast():
-                out = run_batch(model, batch, device, text_encoder)
+                out  = run_batch(model, batch, device, text_encoder)
                 loss = criterion(out["logits"], batch["label"].to(device))
             scaler.scale(loss).backward()
             scaler.unscale_(optimiser)
@@ -205,7 +231,7 @@ def train_epoch(
             scaler.step(optimiser)
             scaler.update()
         else:
-            out = run_batch(model, batch, device, text_encoder)
+            out  = run_batch(model, batch, device, text_encoder)
             loss = criterion(out["logits"], batch["label"].to(device))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -215,8 +241,8 @@ def train_epoch(
             scheduler.step()
 
         total_loss += loss.item()
-        probs = out["probabilities"].detach().cpu().numpy()
-        preds = probs.argmax(axis=1)
+        probs  = out["probabilities"].detach().cpu().numpy()
+        preds  = probs.argmax(axis=1)
         labels = batch["label"].numpy()
         all_preds.extend(preds.tolist())
         all_labels.extend(labels.tolist())
@@ -229,9 +255,7 @@ def train_epoch(
             )
 
     all_probs_np = np.vstack(all_probs)
-    metrics = compute_classification_metrics(
-        np.array(all_labels), all_probs_np
-    )
+    metrics = compute_classification_metrics(np.array(all_labels), all_probs_np)
     metrics["loss"] = total_loss / max(len(loader), 1)
     return metrics
 
@@ -246,11 +270,11 @@ def eval_epoch(
 ) -> dict[str, float]:
     model.eval()
     total_loss = 0.0
-    all_probs = []
+    all_probs  = []
     all_labels = []
 
     for batch in loader:
-        out = run_batch(model, batch, device, text_encoder)
+        out  = run_batch(model, batch, device, text_encoder)
         loss = criterion(out["logits"], batch["label"].to(device))
         total_loss += loss.item()
         probs = out["probabilities"].detach().cpu().numpy()
@@ -258,9 +282,7 @@ def eval_epoch(
         all_labels.extend(batch["label"].numpy().tolist())
 
     all_probs_np = np.vstack(all_probs)
-    metrics = compute_classification_metrics(
-        np.array(all_labels), all_probs_np
-    )
+    metrics = compute_classification_metrics(np.array(all_labels), all_probs_np)
     metrics["loss"] = total_loss / max(len(loader), 1)
     return metrics
 
@@ -273,7 +295,7 @@ class FusionTrainer:
     """Orchestrates the full training + evaluation loop."""
 
     def __init__(self, cfg: dict) -> None:
-        self.cfg = cfg
+        self.cfg  = cfg
         self.seed = cfg.get("project", {}).get("seed", 42)
         set_seed(self.seed)
 
@@ -282,40 +304,46 @@ class FusionTrainer:
         )
         log.info("Device: %s", self.device)
 
-        self.t_cfg  = cfg.get("training", {})
-        self.d_cfg  = cfg.get("data", {})
-        self.o_cfg  = cfg.get("output", {})
+        self.t_cfg = cfg.get("training", {})
+        self.d_cfg = cfg.get("data", {})
+        self.o_cfg = cfg.get("output", {})
 
-        self.checkpoint_dir = Path(self.o_cfg.get("checkpoint_dir",
-                                   "member3_fusion/checkpoints"))
+        self.checkpoint_dir = Path(self.o_cfg.get(
+            "checkpoint_dir", "member3_fusion/checkpoints"
+        ))
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-        self.history: dict[str, list] = {
-            "train": [], "val": [], "test": []
-        }
+        self.history: dict[str, list] = {"train": [], "val": [], "test": []}
 
     # ------------------------------------------------------------------ #
     # Data loading
     # ------------------------------------------------------------------ #
 
-    def load_data(self) -> dict[str, FusionDataset]:
-        splits = load_mustard_fusion_records(
+    def load_data(self) -> tuple[dict[str, FusionDataset], dict]:
+        splits, acoustic_dim = load_mustard_fusion_records(
             mustard_json_path=self.d_cfg["mustard_json"],
             handoff_csv_path=self.d_cfg["audio_handoff_csv"],
             quality_csv_path=self.d_cfg["audio_quality_csv"],
             predictions_csv_path=self.d_cfg["audio_predictions_csv"],
             wav2vec2_npz_path=self.d_cfg.get("wav2vec2_embeddings_npz"),
+            mustard_pp_csv_path=self.d_cfg.get("mustard_pp_csv"),
+            text_embeddings_npz_path=self.d_cfg.get("text_embeddings_npz"),
             val_ratio=self.d_cfg.get("val_ratio", 0.15),
             test_ratio=self.d_cfg.get("test_ratio", 0.15),
             seed=self.seed,
             split_strategy=self.d_cfg.get("split_strategy", "speaker"),
+            dedup_mustard_family=self.d_cfg.get("dedup_mustard_family", True),
         )
-        acoustic_dim = len(ACOUSTIC_FEATURE_COLS) if ACOUSTIC_FEATURE_COLS else 116
         datasets = {
             split: FusionDataset(records, acoustic_dim=acoustic_dim)
             for split, records in splits.items()
         }
-        self._train_records = splits["train"]
+        # Validate modality availability — emit warnings early
+        validate_modality_availability(datasets)
+
+        self._train_records  = splits["train"]
+        self._acoustic_dim   = acoustic_dim
+        self._splits         = splits
         return datasets, splits
 
     def build_loaders(
@@ -351,21 +379,40 @@ class FusionTrainer:
             sum(p.numel() for p in model.parameters()),
             sum(p.numel() for p in model.parameters() if p.requires_grad),
         )
+        log.info(
+            "Fusion strategy: %s  |  PSID: %s  |  Gating: %s",
+            self.cfg.get("model", {}).get("fusion_strategy", "cross_attention"),
+            self.cfg.get("model", {}).get("psid_enabled", True),
+            self.cfg.get("model", {}).get("gating_enabled", True),
+        )
         return model
 
     def build_optimiser(
-        self, model: SarcasToneFusionModel
+        self,
+        model: SarcasToneFusionModel,
+        num_train_batches: int,
     ) -> tuple[AdamW, LambdaLR]:
-        lr   = self.t_cfg.get("learning_rate", 2e-4)
-        wd   = self.t_cfg.get("weight_decay", 1e-2)
+        """Build AdamW + cosine LR schedule.
+
+        num_train_batches is the actual DataLoader length (not an estimate).
+        """
+        lr          = self.t_cfg.get("learning_rate", 2e-4)
+        wd          = self.t_cfg.get("weight_decay", 1e-2)
         warmup_ratio = self.t_cfg.get("warmup_ratio", 0.1)
-        epochs = self.t_cfg.get("epochs", 30)
+        epochs      = self.t_cfg.get("epochs", 30)
+
+        # --- Compute actual total steps from real batch count ---
+        total_steps  = epochs * num_train_batches
+        warmup_steps = int(total_steps * warmup_ratio)
+        log.info(
+            "LR schedule: %d epochs × %d batches = %d total steps, "
+            "%d warmup steps",
+            epochs, num_train_batches, total_steps, warmup_steps,
+        )
 
         optimiser = AdamW(
             model.parameters(), lr=lr, weight_decay=wd, eps=1e-8
         )
-        total_steps = epochs * 50  # estimate; refined after DataLoader built
-        warmup_steps = int(total_steps * warmup_ratio)
         scheduler = get_warmup_cosine_schedule(optimiser, warmup_steps, total_steps)
         return optimiser, scheduler
 
@@ -405,34 +452,35 @@ class FusionTrainer:
 
         # Data
         datasets, splits = self.load_data()
-        acoustic_dim = len(ACOUSTIC_FEATURE_COLS) if ACOUSTIC_FEATURE_COLS else 116
+        acoustic_dim = self._acoustic_dim
         train_loader, val_loader, test_loader = self.build_loaders(datasets)
 
         # Model
         model = self.build_model(acoustic_dim=acoustic_dim)
 
-        # Criterion with class weights
+        # Criterion
         use_weights = self.t_cfg.get("use_class_weights", True)
         if use_weights:
             class_weights = compute_class_weights(splits["train"], self.device)
-            criterion = nn.CrossEntropyLoss(weight=class_weights)
         else:
-            criterion = nn.CrossEntropyLoss()
+            class_weights = None
 
         label_smoothing = self.t_cfg.get("label_smoothing", 0.05)
-        if label_smoothing > 0:
-            criterion = nn.CrossEntropyLoss(
-                weight=class_weights if use_weights else None,
-                label_smoothing=label_smoothing,
-            )
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights,
+            label_smoothing=label_smoothing,
+        )
 
-        optimiser, scheduler = self.build_optimiser(model)
+        # Optimiser — use ACTUAL DataLoader length, not an estimate
+        optimiser, scheduler = self.build_optimiser(
+            model, num_train_batches=len(train_loader)
+        )
 
         # Mixed precision
         use_amp = self.t_cfg.get("mixed_precision", False) and torch.cuda.is_available()
-        scaler = torch.cuda.amp.GradScaler() if use_amp else None
+        scaler  = torch.cuda.amp.GradScaler() if use_amp else None
 
-        # Resume
+        # Resume from checkpoint
         resume_path = self.t_cfg.get("resume_from")
         start_epoch = 0
         if resume_path and Path(resume_path).is_file():
@@ -443,13 +491,16 @@ class FusionTrainer:
             start_epoch = ckpt.get("epoch", 0) + 1
 
         # Training state
-        epochs = self.t_cfg.get("epochs", 30)
-        patience = self.t_cfg.get("early_stopping_patience", 5)
+        epochs      = self.t_cfg.get("epochs", 30)
+        patience    = self.t_cfg.get("early_stopping_patience", 5)
         best_metric = -float("inf")
         best_epoch  = -1
         no_improve  = 0
-        exp_dir = Path(self.o_cfg.get("experiments_dir", "member3_fusion/experiments")) / experiment_name
+        exp_dir = Path(
+            self.o_cfg.get("experiments_dir", "member3_fusion/experiments")
+        ) / experiment_name
         exp_dir.mkdir(parents=True, exist_ok=True)
+        monitor_key = self.t_cfg.get("early_stopping_metric", "macro_f1")
 
         for epoch in range(start_epoch, epochs):
             epoch_start = time.time()
@@ -462,6 +513,7 @@ class FusionTrainer:
                 scaler=scaler,
                 text_encoder=text_encoder,
                 epoch=epoch,
+                log_every=self.cfg.get("logging", {}).get("log_every_n_steps", 20),
             )
             val_metrics = eval_epoch(
                 model, val_loader, criterion, self.device, text_encoder
@@ -471,8 +523,7 @@ class FusionTrainer:
             self.history["val"].append(val_metrics)
 
             epoch_time = time.time() - epoch_start
-            monitor_key = self.t_cfg.get("early_stopping_metric", "macro_f1")
-            current = val_metrics.get(monitor_key, 0.0)
+            current    = val_metrics.get(monitor_key, 0.0)
 
             log.info(
                 "Epoch %d/%d  train_loss=%.4f  val_loss=%.4f  "
@@ -483,20 +534,20 @@ class FusionTrainer:
                 epoch_time,
             )
 
-            # Checkpoint
+            # Checkpoint on improvement
             if current > best_metric:
                 best_metric = current
                 best_epoch  = epoch
                 no_improve  = 0
-                ckpt_path = exp_dir / "best_model.pt"
+                ckpt_path   = exp_dir / "best_model.pt"
                 torch.save(
                     {
-                        "epoch": epoch,
-                        "model_state": model.state_dict(),
+                        "epoch":           epoch,
+                        "model_state":     model.state_dict(),
                         "optimiser_state": optimiser.state_dict(),
-                        "val_metrics": val_metrics,
-                        "train_metrics": train_metrics,
-                        "config": self.cfg,
+                        "val_metrics":     val_metrics,
+                        "train_metrics":   train_metrics,
+                        "config":          self.cfg,
                     },
                     ckpt_path,
                 )
@@ -511,12 +562,38 @@ class FusionTrainer:
                     )
                     break
 
+        # ------------------------------------------------------------------ #
+        # Post-training: temperature calibration on validation logits
+        # ------------------------------------------------------------------ #
+        log.info("Fitting temperature calibration on validation set...")
+        try:
+            fitted_T = fit_temperature(
+                model=model,
+                val_loader=val_loader,
+                device=self.device,
+            )
+            log.info("Calibration temperature fitted: T = %.4f", fitted_T)
+            # Persist calibrated checkpoint
+            model.save(exp_dir / "checkpoint")
+        except Exception as exc:
+            log.warning("Temperature calibration failed: %s", exc)
+
+        # ------------------------------------------------------------------ #
         # Load best checkpoint and evaluate test set
-        log.info("Loading best checkpoint for test evaluation...")
-        best_ckpt = torch.load(exp_dir / "best_model.pt", map_location=self.device)
-        model.load_state_dict(best_ckpt["model_state"])
-        test_metrics = eval_epoch(model, test_loader, criterion, self.device, text_encoder)
+        # ------------------------------------------------------------------ #
+        best_ckpt_path = exp_dir / "best_model.pt"
+        if best_ckpt_path.is_file():
+            log.info("Loading best checkpoint for test evaluation...")
+            best_ckpt = torch.load(best_ckpt_path, map_location=self.device)
+            model.load_state_dict(best_ckpt["model_state"])
+        else:
+            log.warning("No best_model.pt found; evaluating with current weights")
+
+        test_metrics = eval_epoch(
+            model, test_loader, criterion, self.device, text_encoder
+        )
         self.history["test"] = test_metrics
+
         log.info(
             "Test  acc=%.4f  macro_f1=%.4f  roc_auc=%s",
             test_metrics["accuracy"],
@@ -534,8 +611,8 @@ class FusionTrainer:
         )
 
         return {
-            "best_epoch": best_epoch,
-            "best_val_metric": best_metric,
-            "test_metrics": test_metrics,
-            "experiment_dir": str(exp_dir),
+            "best_epoch":       best_epoch,
+            "best_val_metric":  best_metric,
+            "test_metrics":     test_metrics,
+            "experiment_dir":   str(exp_dir),
         }

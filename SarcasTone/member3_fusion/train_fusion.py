@@ -14,7 +14,11 @@ python member3_fusion/train_fusion.py --config my_config.yaml --experiment cross
 # Resume from checkpoint
 python member3_fusion/train_fusion.py --experiment full_model --resume member3_fusion/experiments/full_model/best_model.pt
 
+# No text encoder (use cached embeddings or zero text)
+python member3_fusion/train_fusion.py --experiment full_model --no-text-encoder
+
 All experiments are logged to member3_fusion/experiments/<experiment_name>/
+Calibration temperature is fitted automatically on the validation set after training.
 """
 from __future__ import annotations
 
@@ -43,43 +47,22 @@ log = logging.getLogger("train_fusion")
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train SarcasTone Fusion Model")
     p.add_argument(
-        "--config",
-        default=None,
+        "--config", default=None,
         help="Path to YAML config (default: member3_fusion/configs/fusion_config.yaml)",
     )
     p.add_argument(
-        "--experiment",
-        default="full_model",
+        "--experiment", default="full_model",
         help="Experiment name matching a key in configs.experiments (default: full_model)",
     )
+    p.add_argument("--epochs",      type=int, default=None, help="Override epochs in config")
+    p.add_argument("--batch-size",  type=int, default=None, dest="batch_size",
+                   help="Override batch size")
+    p.add_argument("--seed",        type=int, default=None, help="Override random seed")
+    p.add_argument("--resume",      default=None,
+                   help="Path to checkpoint (best_model.pt) to resume from")
     p.add_argument(
-        "--epochs",
-        type=int,
-        default=None,
-        help="Override epochs in config",
-    )
-    p.add_argument(
-        "--batch-size",
-        type=int,
-        default=None,
-        dest="batch_size",
-        help="Override batch size",
-    )
-    p.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Override random seed",
-    )
-    p.add_argument(
-        "--resume",
-        default=None,
-        help="Path to checkpoint to resume from",
-    )
-    p.add_argument(
-        "--no-text-encoder",
-        action="store_true",
-        help="Disable text encoder (use zero embeddings); useful when no member1 checkpoint",
+        "--no-text-encoder", action="store_true",
+        help="Disable live text encoder; use cached text embeddings or zeros",
     )
     return p.parse_args()
 
@@ -113,34 +96,46 @@ def main() -> None:
     # Text encoder (optional — requires member1 checkpoint)
     text_encoder = None
     if not args.no_text_encoder:
-        m1_checkpoint = Path(cfg.get("interface", {}).get(
-            "member1_checkpoint",
-            "member1_text/outputs/checkpoints/mustard__sarcasm__roberta-base",
-        ))
+        m1_checkpoint = Path(
+            cfg.get("interface", {}).get(
+                "member1_checkpoint",
+                "member1_text/outputs/checkpoints/mustard__sarcasm__roberta-base",
+            )
+        )
+        # Resolve relative path against repo root
+        if not m1_checkpoint.is_absolute():
+            m1_checkpoint = _REPO / m1_checkpoint
+
         if m1_checkpoint.is_dir():
             try:
-                from member3_fusion.src.fusion.encoders import TextEncoderInterface
                 import torch
+                from member3_fusion.src.fusion.encoders import TextEncoderInterface
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 text_encoder = TextEncoderInterface(
                     checkpoint_path=m1_checkpoint,
                     device=device,
                     freeze=True,
                 )
-                if not text_encoder.is_available:
-                    log.warning("TextEncoderInterface loaded but not available; using zeros")
+                if text_encoder.is_available:
+                    log.info("Text encoder loaded from %s", m1_checkpoint)
+                else:
+                    log.warning(
+                        "TextEncoderInterface loaded but reports not available; "
+                        "will fall back to cached embeddings or zeros."
+                    )
                     text_encoder = None
             except Exception as e:
-                log.warning("Could not load text encoder: %s", e)
+                log.warning("Could not load text encoder: %s; will use cached/zeros", e)
         else:
             log.info(
-                "Member1 checkpoint not found at %s; text encoder disabled",
+                "Member1 checkpoint not found at %s; text encoder disabled. "
+                "Provide text_embeddings_npz in config for text signal.",
                 m1_checkpoint,
             )
 
     # Train
     trainer = FusionTrainer(cfg)
-    result = trainer.train(
+    result  = trainer.train(
         experiment_name=args.experiment,
         text_encoder=text_encoder,
     )
@@ -153,7 +148,7 @@ def main() -> None:
     log.info("Test accuracy   : %.4f", test_m.get("accuracy", 0))
     log.info("Test macro-F1   : %.4f", test_m.get("macro_f1", 0))
     log.info("Test ROC-AUC    : %s",   test_m.get("roc_auc"))
-    log.info("Results in      : %s", result["experiment_dir"])
+    log.info("Results in      : %s",   result["experiment_dir"])
     log.info("=" * 60)
 
 

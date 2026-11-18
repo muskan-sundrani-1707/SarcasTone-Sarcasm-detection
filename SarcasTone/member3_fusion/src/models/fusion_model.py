@@ -25,7 +25,7 @@ Forward stages:
   4.  Acoustic-full projection
       → acoustic_proj [B, fusion_hidden//4]
 
-  5.  Cross-modal attention (text ↔ audio)
+  5.  Cross-modal attention (text ↔ audio) — sequence-level [B, 1, D]
       → text_xattn [B, fusion_hidden], audio_xattn [B, fusion_hidden]
 
   6.  PSID (optional)
@@ -43,7 +43,17 @@ Forward stages:
 
   10. Classification head → logits [B, 2]
 
-  11. Temperature scaler (post-training)
+  11. Temperature scaler (post-training calibration)
+
+Fixes vs. original
+-------------------
+* Imports StackedCrossModalAttention and CrossModalAttentionBlock correctly.
+* Cross-attention receives [B, 1, D] sequence tensors (not bare [B, D] vectors)
+  and squeezes back to [B, D] — supporting future seq-level upgrades.
+* Experiment ablation flags (psid_enabled, gating_enabled, fusion_strategy,
+  text_available, audio_available) from the model config block are always
+  forwarded to SarcasToneFusionModel.__init__ via build_fusion_model.
+* Temperature scaler is applied at inference; during training T stays at 1.
 """
 from __future__ import annotations
 
@@ -66,7 +76,11 @@ from shared.constants import (
     PROSODY_DIM, QUALITY_DIM, FUSION_LOGITS,
 )
 
-from member3_fusion.src.attention.cross_attention import StackedCrossModalAttention
+# --- Corrected imports: use the classes that cross_attention.py now exports ---
+from member3_fusion.src.attention.cross_attention import (
+    StackedCrossModalAttention,
+    CrossModalAttentionBlock,
+)
 from member3_fusion.src.incongruence.psid import PSIDModule
 from member3_fusion.src.gating.confidence_gate import ConfidenceGatedFusion
 from member3_fusion.src.context.context_encoder import ContextEncoder
@@ -124,17 +138,17 @@ class SarcasToneFusionModel(nn.Module):
                 f"got '{fusion_strategy}'"
             )
 
-        self.text_dim = text_dim
-        self.audio_dim = audio_dim
-        self.prosody_dim = prosody_dim
-        self.quality_dim = quality_dim
-        self.acoustic_dim = acoustic_dim
-        self.fusion_hidden = fusion_hidden
-        self.num_labels = num_labels
-        self.fusion_strategy = fusion_strategy
-        self.psid_enabled = psid_enabled
-        self.gating_enabled = gating_enabled
-        self.text_available_flag = text_available
+        self.text_dim             = text_dim
+        self.audio_dim            = audio_dim
+        self.prosody_dim          = prosody_dim
+        self.quality_dim          = quality_dim
+        self.acoustic_dim         = acoustic_dim
+        self.fusion_hidden        = fusion_hidden
+        self.num_labels           = num_labels
+        self.fusion_strategy      = fusion_strategy
+        self.psid_enabled         = psid_enabled
+        self.gating_enabled       = gating_enabled
+        self.text_available_flag  = text_available
         self.audio_available_default = audio_available_default
 
         # ------------------------------------------------------------------ #
@@ -175,6 +189,9 @@ class SarcasToneFusionModel(nn.Module):
 
         # ------------------------------------------------------------------ #
         # 4 & 5. Cross-modal attention
+        # Both inputs are projected to fusion_hidden before attention.
+        # StackedCrossModalAttention takes homogeneous dims in its first block
+        # since we pass already-projected [B, 1, fusion_hidden] tensors.
         # ------------------------------------------------------------------ #
         if fusion_strategy in ("cross_attention", "concat"):
             self.cross_attn = StackedCrossModalAttention(
@@ -192,7 +209,6 @@ class SarcasToneFusionModel(nn.Module):
         # 6. PSID module
         # ------------------------------------------------------------------ #
         if psid_enabled:
-            # PSID operates on the cross-attended (or projected) representations
             self.psid = PSIDModule(
                 text_dim=fusion_hidden,
                 audio_dim=fusion_hidden,
@@ -222,22 +238,18 @@ class SarcasToneFusionModel(nn.Module):
         # ------------------------------------------------------------------ #
         # 8. Compute classifier input dimension
         # ------------------------------------------------------------------ #
-        # fused vector width depends on strategy
-        if fusion_strategy in ("early",):
+        if fusion_strategy == "early":
             fused_width = text_dim + audio_dim
-            # extra projection to fusion_hidden
             self.early_proj = nn.Linear(fused_width, fusion_hidden)
             classifier_in_dim = fusion_hidden
         elif fusion_strategy == "late":
-            # Text and audio classifiers individually; combined via averaging
-            # We still build one common head; each modality is projected
             classifier_in_dim = fusion_hidden
         elif fusion_strategy == "concat":
-            classifier_in_dim = fusion_hidden * 2  # [text_xattn; audio_xattn]
+            classifier_in_dim = fusion_hidden * 2
         else:  # cross_attention
-            classifier_in_dim = fusion_hidden       # gated or averaged
+            classifier_in_dim = fusion_hidden
 
-        # Add disagreement and acoustic-full vectors
+        # Disagreement and acoustic-full vectors appended
         classifier_in_dim += disagree_in + acou_out
 
         # ------------------------------------------------------------------ #
@@ -259,7 +271,7 @@ class SarcasToneFusionModel(nn.Module):
         )
 
         # ------------------------------------------------------------------ #
-        # 11. Temperature scaler (post-training)
+        # 11. Temperature scaler (post-training calibration)
         # ------------------------------------------------------------------ #
         self.temperature_scaler = TemperatureScaler(init_value=temperature_init)
 
@@ -267,24 +279,26 @@ class SarcasToneFusionModel(nn.Module):
 
         # Store config for serialisation
         self._config = {
-            "text_dim": text_dim,
-            "audio_dim": audio_dim,
-            "context_dim": context_dim,
-            "prosody_dim": prosody_dim,
-            "quality_dim": quality_dim,
-            "acoustic_dim": acoustic_dim,
-            "fusion_hidden": fusion_hidden,
-            "cross_attn_heads": cross_attn_heads,
+            "text_dim":          text_dim,
+            "audio_dim":         audio_dim,
+            "context_dim":       context_dim,
+            "prosody_dim":       prosody_dim,
+            "quality_dim":       quality_dim,
+            "acoustic_dim":      acoustic_dim,
+            "fusion_hidden":     fusion_hidden,
+            "cross_attn_heads":  cross_attn_heads,
             "cross_attn_layers": cross_attn_layers,
-            "dropout": dropout,
+            "dropout":           dropout,
             "classifier_hidden": classifier_hidden,
-            "num_labels": num_labels,
-            "psid_proj_dim": psid_proj_dim,
+            "num_labels":        num_labels,
+            "psid_proj_dim":     psid_proj_dim,
             "psid_disagree_dim": psid_disagree_dim,
-            "temperature_init": temperature_init,
-            "fusion_strategy": fusion_strategy,
-            "psid_enabled": psid_enabled,
-            "gating_enabled": gating_enabled,
+            "temperature_init":  temperature_init,
+            "fusion_strategy":   fusion_strategy,
+            "psid_enabled":      psid_enabled,
+            "gating_enabled":    gating_enabled,
+            "text_available":    text_available,
+            "audio_available_default": audio_available_default,
         }
 
     def _init_weights(self) -> None:
@@ -305,28 +319,29 @@ class SarcasToneFusionModel(nn.Module):
         self,
         batch: dict,
         *,
-        text_embeddings: Optional[torch.Tensor] = None,  # [B, text_dim]  pre-computed
-        context_embeddings: Optional[torch.Tensor] = None,  # [B, ctx_dim]
-        has_context: Optional[torch.Tensor] = None,         # [B] bool
+        text_embeddings: Optional[torch.Tensor] = None,   # [B, text_dim]
+        context_embeddings: Optional[torch.Tensor] = None, # [B, ctx_dim]
+        has_context: Optional[torch.Tensor] = None,        # [B] bool
         return_logits_only: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Full forward pass.
 
         Args:
             batch:  dict from collate_fn containing tensors and lists.
-            text_embeddings: pre-computed text pool (skips text encoder call).
-            context_embeddings: pre-computed context pool.
-            has_context: bool mask.
-            return_logits_only: return only logits (used by temperature fitting).
+            text_embeddings:    pre-computed text pool [B, text_dim].
+            context_embeddings: pre-computed context pool [B, ctx_dim].
+            has_context:        bool mask [B].
+            return_logits_only: return only logits (used during temperature fitting).
 
         Returns dict containing:
-            logits:        [B, 2]
-            probabilities: [B, 2]
-            text_weight:   [B] (or None)
-            audio_weight:  [B] (or None)
-            disagreement_norm: [B] (or None)
-            cosine_agree:  [B] (or None)
-            entropy:       [B]
+            logits:            [B, 2]
+            probabilities:     [B, 2]
+            text_weight:       [B] or None
+            audio_weight:      [B] or None
+            disagreement_norm: [B] or None
+            cosine_agree:      [B] or None
+            entropy:           [B]
+            context_gate:      [B]
         """
         device = next(self.parameters()).device
 
@@ -344,30 +359,33 @@ class SarcasToneFusionModel(nn.Module):
         if text_embeddings is not None:
             text_pool = text_embeddings.to(device)      # [B, text_dim]
         else:
-            # Zero text if no encoder (text-unavailable ablation)
             text_pool = torch.zeros(B, self.text_dim, device=device)
 
         if context_embeddings is not None:
             ctx_pool = context_embeddings.to(device)
-            hc = has_context.to(device) if has_context is not None else torch.zeros(B, dtype=torch.bool, device=device)
+            hc = (
+                has_context.to(device)
+                if has_context is not None
+                else torch.zeros(B, dtype=torch.bool, device=device)
+            )
         else:
             ctx_pool = torch.zeros(B, self.text_dim, device=device)
-            hc = torch.zeros(B, dtype=torch.bool, device=device)
+            hc       = torch.zeros(B, dtype=torch.bool, device=device)
 
         # ------------------------------------------------------------------ #
         # 2. Context enrichment
         # ------------------------------------------------------------------ #
-        ctx_out = self.context_encoder(text_pool, ctx_pool, hc)
+        ctx_out       = self.context_encoder(text_pool, ctx_pool, hc)
         text_enriched = ctx_out["enriched"]   # [B, text_dim]
 
         # ------------------------------------------------------------------ #
         # 3. Prosody and acoustic projections
         # ------------------------------------------------------------------ #
-        prosody_proj_out = self.prosody_proj(prosody)              # [B, psid_proj_dim]
+        prosody_proj_out  = self.prosody_proj(prosody)                # [B, psid_proj_dim]
         acoustic_proj_out = self.acoustic_full_proj(acoustic_full_v)  # [B, acou_out]
 
         # Mask acoustic outputs where audio is unavailable
-        a_mask = audio_avail.float().unsqueeze(-1)
+        a_mask            = audio_avail.float().unsqueeze(-1)
         acoustic_proj_out = acoustic_proj_out * a_mask
         prosody_proj_out  = prosody_proj_out  * a_mask
 
@@ -385,36 +403,35 @@ class SarcasToneFusionModel(nn.Module):
         audio_weight = None
 
         if self.fusion_strategy == "early":
-            # Concatenate raw, then project
-            combined = torch.cat([text_enriched, audio_emb_raw * a_mask], dim=-1)
-            fused = self.early_proj(combined)   # [B, fusion_hidden]
+            combined    = torch.cat([text_enriched, audio_emb_raw * a_mask], dim=-1)
+            fused       = self.early_proj(combined)   # [B, fusion_hidden]
             text_cross  = fused
             audio_cross = fused
 
         elif self.fusion_strategy == "late":
-            # Average projected representations (simple late fusion)
-            fused = (text_h + audio_h) / 2.0
+            fused       = (text_h + audio_h) / 2.0
             text_cross  = text_h
             audio_cross = audio_h
 
         elif self.fusion_strategy == "concat":
-            # Cross-attended then concatenated
+            # Sequence-level cross-attention: unsqueeze to [B, 1, D]
             t_seq = text_h.unsqueeze(1)    # [B, 1, fusion_hidden]
             a_seq = audio_h.unsqueeze(1)   # [B, 1, fusion_hidden]
             t_out, a_out = self.cross_attn(t_seq, a_seq)
             text_cross  = t_out.squeeze(1)   # [B, fusion_hidden]
             audio_cross = a_out.squeeze(1)   # [B, fusion_hidden]
-            fused = torch.cat([text_cross, audio_cross], dim=-1)  # [B, 2*FH]
+            fused       = torch.cat([text_cross, audio_cross], dim=-1)  # [B, 2*FH]
 
         else:  # cross_attention
-            t_seq = text_h.unsqueeze(1)
-            a_seq = audio_h.unsqueeze(1)
+            # Sequence-level cross-attention
+            t_seq = text_h.unsqueeze(1)    # [B, 1, fusion_hidden]
+            a_seq = audio_h.unsqueeze(1)   # [B, 1, fusion_hidden]
             t_out, a_out = self.cross_attn(t_seq, a_seq)
-            text_cross  = t_out.squeeze(1)
-            audio_cross = a_out.squeeze(1)
+            text_cross  = t_out.squeeze(1)  # [B, fusion_hidden]
+            audio_cross = a_out.squeeze(1)  # [B, fusion_hidden]
 
             if self.gating_enabled and self.conf_gate is not None:
-                gate_out = self.conf_gate(
+                gate_out     = self.conf_gate(
                     text_emb=text_cross,
                     audio_emb=audio_cross,
                     quality_vec=quality,
@@ -432,10 +449,10 @@ class SarcasToneFusionModel(nn.Module):
         # ------------------------------------------------------------------ #
         disagreement_norm = None
         cosine_agree      = None
-        disagree_vec      = torch.zeros(0, device=device)   # placeholder
+        disagree_vec      = torch.zeros(B, 0, device=device)   # placeholder
 
         if self.psid_enabled and self.psid is not None:
-            psid_out = self.psid(text_cross, audio_cross)
+            psid_out          = self.psid(text_cross, audio_cross)
             disagree_vec      = psid_out["disagreement"]   # [B, disagree_dim]
             cosine_agree      = psid_out["cosine_agree"]   # [B]
             disagreement_norm = disagree_vec.norm(dim=-1)  # [B]
@@ -444,7 +461,7 @@ class SarcasToneFusionModel(nn.Module):
         # 8. Assemble classifier input
         # ------------------------------------------------------------------ #
         parts = [fused, acoustic_proj_out]
-        if self.psid_enabled and disagree_vec.numel() > 0:
+        if self.psid_enabled and disagree_vec.shape[-1] > 0:
             parts.append(disagree_vec)
         classifier_input = torch.cat(parts, dim=-1)   # [B, classifier_in_dim]
 
@@ -464,20 +481,22 @@ class SarcasToneFusionModel(nn.Module):
         # ------------------------------------------------------------------ #
         # 11. Temperature scaling (at inference; T=1 during training)
         # ------------------------------------------------------------------ #
-        # During training we don't scale (T fixed at 1 via init)
-        probs = torch.softmax(logits, dim=-1)
+        # During training the temperature parameter is frozen at 1.0 (by default).
+        # After fit_temperature() is called the scaler applies the fitted T.
+        probs = torch.softmax(logits / self.temperature_scaler.temperature, dim=-1)
+
         from member3_fusion.src.uncertainty.calibration import predictive_entropy
         entropy = predictive_entropy(probs)
 
         return {
-            "logits": logits,
-            "probabilities": probs,
-            "text_weight": text_weight,
-            "audio_weight": audio_weight,
+            "logits":            logits,
+            "probabilities":     probs,
+            "text_weight":       text_weight,
+            "audio_weight":      audio_weight,
             "disagreement_norm": disagreement_norm,
-            "cosine_agree": cosine_agree,
-            "entropy": entropy,
-            "context_gate": ctx_out["gate"],
+            "cosine_agree":      cosine_agree,
+            "entropy":           entropy,
+            "context_gate":      ctx_out["gate"],
         }
 
     # ---------------------------------------------------------------------- #
@@ -494,11 +513,15 @@ class SarcasToneFusionModel(nn.Module):
         log.info("Saved fusion model to %s", directory)
 
     @classmethod
-    def load(cls, directory: Path | str, device: torch.device | None = None) -> "SarcasToneFusionModel":
+    def load(
+        cls, directory: Path | str, device: torch.device | None = None
+    ) -> "SarcasToneFusionModel":
         directory = Path(directory)
-        config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
-        model = cls(**config)
-        state = torch.load(directory / "model.pt", map_location=device or "cpu")
+        config    = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        model     = cls(**config)
+        state     = torch.load(
+            directory / "model.pt", map_location=device or "cpu"
+        )
         model.load_state_dict(state)
         if device:
             model.to(device)
@@ -512,17 +535,22 @@ class SarcasToneFusionModel(nn.Module):
 # ---------------------------------------------------------------------------
 
 def build_fusion_model(cfg: dict) -> SarcasToneFusionModel:
-    """Build a SarcasToneFusionModel from a config dict."""
-    m = cfg.get("model", {})
-    exp = {}  # experiment-specific overrides already merged by load_config
+    """Build a SarcasToneFusionModel from a config dict.
+
+    Experiment ablation flags (fusion_strategy, psid_enabled, gating_enabled,
+    text_available, audio_available) are taken from the ``model`` block so that
+    the config.load_config experiment overlay propagates here correctly.
+    """
+    m   = cfg.get("model", {})
+    ifc = cfg.get("interface", {})
 
     return SarcasToneFusionModel(
-        text_dim=cfg["interface"]["text_hidden"],
-        audio_dim=cfg["interface"]["audio_hidden"],
-        context_dim=cfg["interface"]["context_hidden"],
-        prosody_dim=cfg["interface"]["prosody_dim"],
-        quality_dim=cfg["interface"]["quality_dim"],
-        acoustic_dim=cfg["interface"].get("acoustic_feature_dim", 116),
+        text_dim=ifc.get("text_hidden",    TEXT_HIDDEN),
+        audio_dim=ifc.get("audio_hidden",  AUDIO_HIDDEN),
+        context_dim=ifc.get("context_hidden", CONTEXT_HIDDEN),
+        prosody_dim=ifc.get("prosody_dim", PROSODY_DIM),
+        quality_dim=ifc.get("quality_dim", QUALITY_DIM),
+        acoustic_dim=ifc.get("acoustic_feature_dim", 116),
         fusion_hidden=m.get("fusion_hidden", 512),
         cross_attn_heads=m.get("cross_attn_heads", 8),
         cross_attn_layers=m.get("cross_attn_layers", 2),
@@ -532,6 +560,7 @@ def build_fusion_model(cfg: dict) -> SarcasToneFusionModel:
         psid_proj_dim=m.get("psid_proj_dim", 128),
         psid_disagree_dim=m.get("psid_disagreement_dim", 128),
         temperature_init=m.get("temperature_init", 1.0),
+        # --- Experiment ablation flags (populated by load_config overlay) ---
         fusion_strategy=m.get("fusion_strategy", "cross_attention"),
         psid_enabled=m.get("psid_enabled", True),
         gating_enabled=m.get("gating_enabled", True),

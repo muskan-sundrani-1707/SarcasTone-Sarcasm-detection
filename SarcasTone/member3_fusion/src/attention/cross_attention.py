@@ -1,169 +1,280 @@
+"""Cross-Modal Attention Module for SarcasTone — member3_fusion.
+
+Public API
+----------
+CrossModalAttentionBlock  – single bidirectional cross-attention block
+                            (text_dim, audio_dim may differ; projects to out_dim)
+StackedCrossModalAttention – N stacked CrossModalAttentionBlocks, used by
+                             SarcasToneFusionModel.
+
+BiDirectionalCrossAttention – legacy alias kept for backward compatibility.
+
+Both output a (text_out, audio_out) tuple for direct use in fusion_model.py:
+    t_out, a_out = self.cross_attn(t_seq, a_seq)
+
+Supports:
+  - Single-token pooled inputs  [B, 1, D]
+  - Full sequence inputs        [B, T, D]  (variable T)
+  - Different text_dim / audio_dim          (input projections align them)
+  - Optional key-padding masks for padded sequences
 """
-Cross-Modal Attention Module for SarcasTone
+from __future__ import annotations
 
-Implements bidirectional cross-attention between text and audio modalities:
-  - Text queries attending to audio keys/values
-  - Audio queries attending to text keys/values
-
-Uses Multi-Head Attention with proper masking for variable-length sequences.
-"""
-
-import torch
-import torch.nn as nn
 import math
 from typing import Optional, Tuple
 
+import torch
+import torch.nn as nn
 
-class CrossModalAttentionLayer(nn.Module):
-    """Single cross-modal attention layer with residual connection and layer norm."""
-    
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
+
+# ---------------------------------------------------------------------------
+# Single cross-attention layer (one direction)
+# ---------------------------------------------------------------------------
+
+class _CrossAttentionLayer(nn.Module):
+    """One direction of cross-modal attention: query from modality A, kv from B.
+
+    Pre-LN transformer block with residual connection + feed-forward.
+    """
+
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1) -> None:
         super().__init__()
-        assert d_model % n_heads == 0, f"d_model ({d_model}) must be divisible by n_heads ({n_heads})"
-        
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.d_k = d_model // n_heads
-        
-        # Cross-attention: queries from one modality, keys/values from another
-        self.cross_attn = nn.MultiheadAttention(
+        assert d_model % n_heads == 0, (
+            f"d_model ({d_model}) must be divisible by n_heads ({n_heads})"
+        )
+        self.attn = nn.MultiheadAttention(
             embed_dim=d_model,
             num_heads=n_heads,
             dropout=dropout,
-            batch_first=True
+            batch_first=True,
         )
-        
-        # Feed-forward network
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_model * 4),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_model * 4, d_model),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
         )
-        
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-        
+        self.drop  = nn.Dropout(dropout)
+
     def forward(
         self,
-        query: torch.Tensor,
-        key_value: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None
+        query: torch.Tensor,                     # [B, Sq, D]
+        key_value: torch.Tensor,                 # [B, Skv, D]
+        key_padding_mask: Optional[torch.Tensor] = None,  # [B, Skv] bool
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            output:          [B, Sq, D]
+            attn_weights:    [B, n_heads, Sq, Skv]  (averaged across heads)
+        """
+        # Pre-LN cross-attention
+        q_norm = self.norm1(query)
+        attn_out, attn_w = self.attn(
+            query=q_norm,
+            key=key_value,
+            value=key_value,
+            key_padding_mask=key_padding_mask,
+        )
+        query = query + self.drop(attn_out)
+        # Pre-LN feed-forward
+        query = query + self.ffn(self.norm2(query))
+        return query, attn_w
+
+
+# ---------------------------------------------------------------------------
+# CrossModalAttentionBlock — bidirectional, possibly different input dims
+# ---------------------------------------------------------------------------
+
+class CrossModalAttentionBlock(nn.Module):
+    """Single bidirectional cross-modal attention block.
+
+    Both text→audio and audio→text attention are computed within one block.
+    If text_dim ≠ out_dim or audio_dim ≠ out_dim, linear input projections
+    align the representations before attention.
+
+    Args:
+        text_dim:  Dimension of text features (input).
+        audio_dim: Dimension of audio features (input).
+        out_dim:   Dimension used *inside* attention and returned as output.
+        num_heads: Number of attention heads (must divide out_dim).
+        dropout:   Dropout probability.
+
+    Forward:
+        text_seq:  [B, St, text_dim]
+        audio_seq: [B, Sa, audio_dim]
+        text_mask:  [B, St] bool (True = padded) or None
+        audio_mask: [B, Sa] bool or None
+
+    Returns:
+        (text_out [B, St, out_dim], audio_out [B, Sa, out_dim])
+    """
+
+    def __init__(
+        self,
+        text_dim:  int,
+        audio_dim: int,
+        out_dim:   int,
+        num_heads: int = 8,
+        dropout:   float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.out_dim = out_dim
+
+        # Input projections (identity-like when dims match)
+        self.text_in_proj  = (
+            nn.Linear(text_dim,  out_dim) if text_dim  != out_dim else nn.Identity()
+        )
+        self.audio_in_proj = (
+            nn.Linear(audio_dim, out_dim) if audio_dim != out_dim else nn.Identity()
+        )
+
+        # Bidirectional cross-attention layers
+        self.t2a = _CrossAttentionLayer(out_dim, num_heads, dropout)  # text ← audio
+        self.a2t = _CrossAttentionLayer(out_dim, num_heads, dropout)  # audio ← text
+
+        # Output norms
+        self.text_out_norm  = nn.LayerNorm(out_dim)
+        self.audio_out_norm = nn.LayerNorm(out_dim)
+
+    def forward(
+        self,
+        text_seq:   torch.Tensor,
+        audio_seq:  torch.Tensor,
+        text_mask:  Optional[torch.Tensor] = None,
+        audio_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Project to common dimension
+        t = self.text_in_proj(text_seq)    # [B, St, out_dim]
+        a = self.audio_in_proj(audio_seq)  # [B, Sa, out_dim]
+
+        # Text attends to audio; audio attends to text
+        t_out, _ = self.t2a(query=t, key_value=a, key_padding_mask=audio_mask)
+        a_out, _ = self.a2t(query=a, key_value=t, key_padding_mask=text_mask)
+
+        return self.text_out_norm(t_out), self.audio_out_norm(a_out)
+
+
+# ---------------------------------------------------------------------------
+# StackedCrossModalAttention — N stacked blocks
+# ---------------------------------------------------------------------------
+
+class StackedCrossModalAttention(nn.Module):
+    """N stacked CrossModalAttentionBlocks.
+
+    Used by SarcasToneFusionModel as ``self.cross_attn``.
+
+    Forward signature:
+        text_seq  [B, St, text_dim]
+        audio_seq [B, Sa, audio_dim]
+        → (text_out [B, St, out_dim], audio_out [B, Sa, out_dim])
+
+    Compatible with single-token pooled inputs [B, 1, D] and full sequences.
+    """
+
+    def __init__(
+        self,
+        text_dim:   int,
+        audio_dim:  int,
+        out_dim:    int,
+        num_layers: int = 2,
+        num_heads:  int = 8,
+        dropout:    float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.out_dim    = out_dim
+        self.num_layers = num_layers
+
+        # First block: handles heterogeneous input dims
+        # Subsequent blocks: out_dim → out_dim (homogeneous)
+        blocks = []
+        in_t, in_a = text_dim, audio_dim
+        for _ in range(num_layers):
+            blocks.append(
+                CrossModalAttentionBlock(
+                    text_dim=in_t, audio_dim=in_a,
+                    out_dim=out_dim, num_heads=num_heads, dropout=dropout,
+                )
+            )
+            in_t = out_dim
+            in_a = out_dim
+        self.blocks = nn.ModuleList(blocks)
+
+    def forward(
+        self,
+        text_seq:   torch.Tensor,
+        audio_seq:  torch.Tensor,
+        text_mask:  Optional[torch.Tensor] = None,
+        audio_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            query: (batch, seq_q, d_model) - from one modality
-            key_value: (batch, seq_kv, d_model) - from the other modality
-            key_padding_mask: (batch, seq_kv) - True for padded positions
-            
-        Returns:
-            output: (batch, seq_q, d_model)
-            attention_weights: (batch, n_heads, seq_q, seq_kv)
-        """
-        # Cross-attention with residual
-        residual = query
-        query_norm = self.norm1(query)
-        
-        attn_output, attn_weights = self.cross_attn(
-            query=query_norm,
-            key=key_value,
-            value=key_value,
-            key_padding_mask=key_padding_mask
-        )
-        query = residual + self.dropout(attn_output)
-        
-        # FFN with residual
-        residual = query
-        query = residual + self.ffn(self.norm2(query))
-        
-        return query, attn_weights
+            text_seq:   [B, St, text_dim]
+            audio_seq:  [B, Sa, audio_dim]
+            text_mask:  [B, St] bool or None
+            audio_mask: [B, Sa] bool or None
 
+        Returns:
+            (text_out [B, St, out_dim], audio_out [B, Sa, out_dim])
+        """
+        t, a = text_seq, audio_seq
+        for block in self.blocks:
+            t, a = block(t, a, text_mask=text_mask, audio_mask=audio_mask)
+        return t, a
+
+
+# ---------------------------------------------------------------------------
+# Legacy alias — keeps old code that imports BiDirectionalCrossAttention alive
+# ---------------------------------------------------------------------------
 
 class BiDirectionalCrossAttention(nn.Module):
+    """Legacy wrapper around StackedCrossModalAttention.
+
+    Kept for backward compatibility with any code that imports this name.
+    Returns a dict with keys matching the original API.
     """
-    Bidirectional cross-modal attention between text and audio.
-    
-    Text attends to audio AND audio attends to text,
-    allowing information flow in both directions.
-    """
-    
+
     def __init__(
         self,
-        d_model: int = 256,
-        n_heads: int = 8,
-        n_layers: int = 2,
-        dropout: float = 0.1
-    ):
+        d_model:   int = 256,
+        n_heads:   int = 8,
+        n_layers:  int = 2,
+        dropout:   float = 0.1,
+    ) -> None:
         super().__init__()
-        
-        self.d_model = d_model
-        self.n_layers = n_layers
-        
-        # Text-to-Audio attention layers (text queries, audio keys/values)
-        self.text_to_audio_layers = nn.ModuleList([
-            CrossModalAttentionLayer(d_model, n_heads, dropout)
-            for _ in range(n_layers)
-        ])
-        
-        # Audio-to-Text attention layers (audio queries, text keys/values)  
-        self.audio_to_text_layers = nn.ModuleList([
-            CrossModalAttentionLayer(d_model, n_heads, dropout)
-            for _ in range(n_layers)
-        ])
-        
-        # Final layer norms
-        self.text_output_norm = nn.LayerNorm(d_model)
-        self.audio_output_norm = nn.LayerNorm(d_model)
-        
+        self._stack = StackedCrossModalAttention(
+            text_dim=d_model, audio_dim=d_model, out_dim=d_model,
+            num_layers=n_layers, num_heads=n_heads, dropout=dropout,
+        )
+
     def forward(
         self,
-        text_features: torch.Tensor,
+        text_features:  torch.Tensor,
         audio_features: torch.Tensor,
-        text_padding_mask: Optional[torch.Tensor] = None,
-        audio_padding_mask: Optional[torch.Tensor] = None
+        text_padding_mask:  Optional[torch.Tensor] = None,
+        audio_padding_mask: Optional[torch.Tensor] = None,
     ) -> dict:
         """
         Args:
-            text_features: (batch, seq_text, d_model)
-            audio_features: (batch, seq_audio, d_model)
-            text_padding_mask: (batch, seq_text) - True for padded positions
-            audio_padding_mask: (batch, seq_audio) - True for padded positions
-            
-        Returns:
-            dict with keys:
-                'text_attended': (batch, seq_text, d_model)
-                'audio_attended': (batch, seq_audio, d_model)
-                'text_to_audio_weights': list of attention weight tensors
-                'audio_to_text_weights': list of attention weight tensors
+            text_features:  [B, St, d_model]
+            audio_features: [B, Sa, d_model]
+
+        Returns dict:
+            text_attended:         [B, St, d_model]
+            audio_attended:        [B, Sa, d_model]
+            text_to_audio_weights: []  (not retained in new impl)
+            audio_to_text_weights: []
         """
-        text_out = text_features
-        audio_out = audio_features
-        
-        t2a_weights = []
-        a2t_weights = []
-        
-        for i in range(self.n_layers):
-            # Text attends to audio
-            text_out, t2a_w = self.text_to_audio_layers[i](
-                query=text_out,
-                key_value=audio_out,
-                key_padding_mask=audio_padding_mask
-            )
-            t2a_weights.append(t2a_w)
-            
-            # Audio attends to text
-            audio_out, a2t_w = self.audio_to_text_layers[i](
-                query=audio_out,
-                key_value=text_out,
-                key_padding_mask=text_padding_mask
-            )
-            a2t_weights.append(a2t_w)
-        
+        t_out, a_out = self._stack(
+            text_features, audio_features,
+            text_mask=text_padding_mask,
+            audio_mask=audio_padding_mask,
+        )
         return {
-            'text_attended': self.text_output_norm(text_out),
-            'audio_attended': self.audio_output_norm(audio_out),
-            'text_to_audio_weights': t2a_weights,
-            'audio_to_text_weights': a2t_weights
+            "text_attended":         t_out,
+            "audio_attended":        a_out,
+            "text_to_audio_weights": [],
+            "audio_to_text_weights": [],
         }
