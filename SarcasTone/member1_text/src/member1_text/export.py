@@ -13,9 +13,9 @@ import numpy as np
 import torch
 
 from member1_text import require_python_311
-from SarcasTone.member1_text.member1_text.src.member1_text.api import resolve_device
-from SarcasTone.member1_text.member1_text.src.member1_text.config import PACKAGE_ROOT, model_slug
-from SarcasTone.member1_text.member1_text.src.member1_text.model import load_span_model
+from member1_text.api import resolve_device
+from member1_text.config import PACKAGE_ROOT, model_slug
+from member1_text.model import load_span_model
 
 
 def export_embeddings(
@@ -28,7 +28,7 @@ def export_embeddings(
 ) -> Path:
     from transformers import AutoTokenizer
 
-    from SarcasTone.member1_text.member1_text.src.member1_text.tokenize_encode import assert_tokenizer_matches_model
+    from member1_text.tokenize_encode import assert_tokenizer_matches_model
     from member1_text.train import ExampleDataset, collate_examples
 
     checkpoint_path = Path(checkpoint)

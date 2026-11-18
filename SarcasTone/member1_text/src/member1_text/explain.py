@@ -14,9 +14,9 @@ from typing import Any
 import torch
 
 from member1_text import require_python_311
-from SarcasTone.member1_text.src.member1_text.model import load_span_model
-from SarcasTone.member1_text.src.member1_text.preprocess import normalize_text
-from SarcasTone.member1_text.src.member1_text.tokenize_encode import assert_tokenizer_matches_model, encode_pair
+from member1_text.model import load_span_model
+from member1_text.preprocess import normalize_text
+from member1_text.tokenize_encode import assert_tokenizer_matches_model, encode_pair
 
 LIMITS = (
     "Limits: attributions use the pad embedding as the baseline; they are not causal; "

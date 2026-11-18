@@ -12,7 +12,7 @@ import traceback
 import gc
 import time
 
-from SarcasTone.member2_audio.src.audio_intelligence.audio_intelligence import (
+from member2_audio.src.audio_intelligence.audio_intelligence import (
     get_audio_sequence_embedding
 )
 
@@ -27,7 +27,7 @@ AUDIO_DIR = (
     / "mustard" / "audio"
 )
 
-OUTPUT_DIR = Path(r"E:\SarcasTone_Embeddings")
+OUTPUT_DIR = Path(os.environ.get("SARCASTONE_EMBEDDINGS", ROOT / "outputs" / "embeddings"))
 
 OUTPUT_DIR.mkdir(
     parents=True,

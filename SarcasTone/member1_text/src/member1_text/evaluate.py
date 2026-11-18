@@ -26,8 +26,8 @@ from sklearn.metrics import (
 )
 
 from member1_text import require_python_311
-from SarcasTone.member1_text.member1_text.src.member1_text.canonicalize import CanonicalExample
-from SarcasTone.member1_text.member1_text.src.member1_text.config import PACKAGE_ROOT, checkpoint_name, model_slug
+from member1_text.canonicalize import CanonicalExample
+from member1_text.config import PACKAGE_ROOT, checkpoint_name, model_slug
 
 
 def classification_metrics(
@@ -198,7 +198,7 @@ def write_classification_artifacts(
     probabilities: list[float] | None = None,
     title: str,
 ) -> None:
-    from SarcasTone.member1_text.member1_text.src.member1_text.plots import plot_confusion_matrix, plot_loss, plot_precision_recall, plot_roc
+    from member1_text.plots import plot_confusion_matrix, plot_loss, plot_precision_recall, plot_roc
 
     plot_confusion_matrix(
         metrics["confusion_matrix"],

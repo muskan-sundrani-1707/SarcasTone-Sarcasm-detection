@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from member1_text import require_python_311
-from SarcasTone.member1_text.member1_text.src.member1_text.config import load_config
+from member1_text.config import load_config
 
 AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".mp4"}
 

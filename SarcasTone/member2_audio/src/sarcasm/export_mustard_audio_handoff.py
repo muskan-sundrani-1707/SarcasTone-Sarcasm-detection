@@ -14,7 +14,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from SarcasTone.member2_audio.src.audio_intelligence.audio_intelligence import (
+from member2_audio.src.audio_intelligence.audio_intelligence import (
     get_audio_quality
 )
 
@@ -34,7 +34,7 @@ FEATURE_PATH = (
     / "mustard" / "mustard_acoustic_features.csv"
 )
 
-EMBEDDING_DIR = Path(r"E:\SarcasTone_Embeddings")
+EMBEDDING_DIR = Path(os.environ.get("SARCASTONE_EMBEDDINGS", ROOT / "outputs" / "embeddings"))
 
 POOLED_PATH = (
     EMBEDDING_DIR / "wav2vec2_embeddings.npz"

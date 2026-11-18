@@ -13,10 +13,10 @@ import torch
 from transformers import AutoTokenizer
 
 from member1_text.asr import transcribe_audio
-from SarcasTone.member1_text.member1_text.src.member1_text.config import PACKAGE_ROOT
-from SarcasTone.member1_text.member1_text.src.member1_text.model import load_span_model
-from SarcasTone.member1_text.member1_text.src.member1_text.preprocess import normalize_text
-from SarcasTone.member1_text.member1_text.src.member1_text.tokenize_encode import assert_tokenizer_matches_model, encode_pair
+from member1_text.config import PACKAGE_ROOT
+from member1_text.model import load_span_model
+from member1_text.preprocess import normalize_text
+from member1_text.tokenize_encode import assert_tokenizer_matches_model, encode_pair
 
 DEPLOYMENT_CHECKPOINT = PACKAGE_ROOT / "outputs" / "checkpoints" / "mustard__sarcasm__roberta-base"
 _CACHE: dict[str, object] = {}

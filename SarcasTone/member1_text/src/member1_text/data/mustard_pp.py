@@ -13,8 +13,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from SarcasTone.member1_text.member1_text.src.member1_text.canonicalize import CanonicalExample, require_local_file
-from SarcasTone.member1_text.member1_text.src.member1_text.config import load_config, resolve_repo_path
+from member1_text.canonicalize import CanonicalExample, require_local_file
+from member1_text.config import load_config, resolve_repo_path
 
 SOURCE_URL = "https://github.com/cfiltnlp/MUStARD_Plus_Plus"
 CITATION = (

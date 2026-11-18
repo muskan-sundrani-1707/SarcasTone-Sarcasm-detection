@@ -11,7 +11,7 @@ import re
 import unicodedata
 from typing import Any
 
-from SarcasTone.member1_text.src.member1_text.canonicalize import CanonicalExample
+from member1_text.canonicalize import CanonicalExample
 
 _CURLY_QUOTES = str.maketrans(
     {

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit, StratifiedKFold
 
-from SarcasTone.member1_text.member1_text.src.member1_text.canonicalize import CanonicalExample, normalize_overlap_text
+from member1_text.canonicalize import CanonicalExample, normalize_overlap_text
 
 
 def _labels(examples: Sequence[CanonicalExample]) -> list[int]:

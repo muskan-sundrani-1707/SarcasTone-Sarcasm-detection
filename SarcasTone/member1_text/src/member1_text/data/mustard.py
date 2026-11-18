@@ -12,14 +12,14 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from SarcasTone.member1_text.member1_text.src.member1_text.canonicalize import (
+from member1_text.canonicalize import (
     CanonicalExample,
     DatasetNotAvailableError,
     normalize_overlap_text,
     require_local_file,
 )
-from SarcasTone.member1_text.member1_text.src.member1_text.config import PACKAGE_ROOT, load_config, resolve_repo_path
-from SarcasTone.member1_text.member1_text.src.member1_text.provenance import build_provenance, write_provenance
+from member1_text.config import PACKAGE_ROOT, load_config, resolve_repo_path
+from member1_text.provenance import build_provenance, write_provenance
 
 SOURCE_URL = "https://github.com/soujanyaporia/MUStARD"
 TEXT_URL = "https://raw.githubusercontent.com/soujanyaporia/MUStARD/master/data/sarcasm_data.json"

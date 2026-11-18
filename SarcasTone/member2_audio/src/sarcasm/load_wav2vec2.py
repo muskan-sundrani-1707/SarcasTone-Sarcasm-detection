@@ -1,7 +1,9 @@
 
 import os
 
-os.environ["HF_HOME"] = r"E:\SarcasTone_Cache"
+if "HF_HOME" not in os.environ:
+    from pathlib import Path
+    os.environ["HF_HOME"] = str(Path(__file__).resolve().parents[2] / ".cache")
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 

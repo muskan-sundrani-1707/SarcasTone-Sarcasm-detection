@@ -3,11 +3,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import os
+
 ROOT = Path(__file__).resolve().parents[2]
 
 AUDIO_DIR = ROOT / "data" / "processed" / "mustard" / "audio"
 
-OUTPUT_DIR = Path(r"E:\SarcasTone_Embeddings")
+OUTPUT_DIR = Path(os.environ.get("SARCASTONE_EMBEDDINGS", ROOT / "outputs" / "embeddings"))
 
 NPZ_PATH = OUTPUT_DIR / "mustard_frame_embeddings.npz"
 

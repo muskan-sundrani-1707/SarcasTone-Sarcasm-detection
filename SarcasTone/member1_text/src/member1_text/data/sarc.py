@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from SarcasTone.member1_text.member1_text.src.member1_text.canonicalize import CanonicalExample, require_local_file
-from SarcasTone.member1_text.member1_text.src.member1_text.config import load_config, resolve_repo_path
+from member1_text.canonicalize import CanonicalExample, require_local_file
+from member1_text.config import load_config, resolve_repo_path
 
 SOURCE_URL = "https://nlp.cs.princeton.edu/old/SARC/2.0/"
 CITATION = (

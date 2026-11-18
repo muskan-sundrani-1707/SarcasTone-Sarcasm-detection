@@ -1,7 +1,21 @@
+"""Audio preprocessing for Wav2Vec2 inference."""
 
+from __future__ import annotations
+
+from pathlib import Path
 import numpy as np
 
-from SarcasTone.member2_audio.src.audio_processing.audio_loader import load_audio
+try:
+    from member2_audio.src.audio_processing.audio_loader import load_audio
+except ImportError:
+    try:
+        from ..audio_processing.audio_loader import load_audio
+    except (ImportError, ValueError):
+        import sys
+        _root = Path(__file__).resolve().parents[2]
+        if str(_root) not in sys.path:
+            sys.path.insert(0, str(_root))
+        from src.audio_processing.audio_loader import load_audio
 
 
 def prepare_audio_for_wav2vec2(audio_path):
@@ -9,7 +23,6 @@ def prepare_audio_for_wav2vec2(audio_path):
     Load WAV audio and resample to 16 kHz mono
     for Wav2Vec2 inference.
     """
-
     waveform, sr, metadata = load_audio(
         audio_path,
         mono=True,

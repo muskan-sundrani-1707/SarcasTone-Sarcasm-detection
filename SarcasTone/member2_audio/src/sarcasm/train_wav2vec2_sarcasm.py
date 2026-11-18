@@ -27,9 +27,8 @@ from sklearn.metrics import (
 
 ROOT = Path(__file__).resolve().parents[2]
 
-EMBEDDING_FILE = Path(
-    r"E:\SarcasTone_Embeddings\wav2vec2_embeddings.npz"
-)
+EMBEDDING_DIR = Path(os.environ.get("SARCASTONE_EMBEDDINGS", ROOT / "outputs" / "embeddings"))
+EMBEDDING_FILE = EMBEDDING_DIR / "wav2vec2_embeddings.npz"
 
 MANIFEST_FILE = (
     ROOT / "data" / "processed" / "mustard"

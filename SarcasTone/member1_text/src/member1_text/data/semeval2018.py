@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from SarcasTone.member1_text.member1_text.src.member1_text.canonicalize import CanonicalExample, require_local_file
-from SarcasTone.member1_text.member1_text.src.member1_text.config import load_config, resolve_repo_path
+from member1_text.canonicalize import CanonicalExample, require_local_file
+from member1_text.config import load_config, resolve_repo_path
 
 SOURCE_URL = "https://github.com/Cyvhee/SemEval2018-Task3"
 LICENSE_NOTE = (

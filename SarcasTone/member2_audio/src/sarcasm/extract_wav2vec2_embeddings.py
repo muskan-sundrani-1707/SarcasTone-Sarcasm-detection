@@ -1,11 +1,14 @@
 
 import os
 
-os.environ["HF_HOME"] = r"E:\SarcasTone_Cache"
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = str(ROOT / ".cache")
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,8 +20,6 @@ from transformers import (
     Wav2Vec2FeatureExtractor
 )
 
-ROOT = Path(__file__).resolve().parents[2]
-
 AUDIO_DIR = (
     ROOT / "data" / "processed" / "mustard" / "audio"
 )
@@ -28,7 +29,7 @@ MANIFEST_FILE = (
     / "mustard_audio_manifest.csv"
 )
 
-OUTPUT_DIR = Path(r"E:\SarcasTone_Embeddings")
+OUTPUT_DIR = Path(os.environ.get("SARCASTONE_EMBEDDINGS", ROOT / "outputs" / "embeddings"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_FILE = OUTPUT_DIR / "wav2vec2_embeddings.npz"
