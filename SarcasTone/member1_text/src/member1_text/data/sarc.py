@@ -57,12 +57,27 @@ def load_comments(path: Path | None = None) -> dict[str, dict[str, Any]]:
 
 
 def _comment_record(comment_id: str, value: Any) -> dict[str, Any]:
+    """Accept a text string, a dict with ``text``, or the official list record.
+
+    The released ``comments.json`` stores each comment as a list. Text is the
+    first field. Subreddit is field 2 in the 9-field release and field 9 when
+    a link id is inserted before it. A missing id is still a hard error.
+    """
     if isinstance(value, str):
-        return {"text": value}
+        return {"text": value, "subreddit": ""}
     if isinstance(value, dict):
         if "text" not in value:
             raise ValueError(f"SARC comment {comment_id} has no text field.")
         return value
+    if isinstance(value, list):
+        if not value or not isinstance(value[0], str) or not value[0].strip():
+            raise ValueError(f"SARC comment {comment_id} list record has no text at index 0.")
+        subreddit = ""
+        if len(value) > 2 and isinstance(value[2], str):
+            subreddit = value[2]
+        elif len(value) > 9 and isinstance(value[9], str):
+            subreddit = value[9]
+        return {"text": value[0], "subreddit": subreddit}
     raise ValueError(f"SARC comment {comment_id} has unsupported type {type(value).__name__}.")
 
 

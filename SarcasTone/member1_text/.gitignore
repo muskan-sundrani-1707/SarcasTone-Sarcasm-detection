@@ -11,7 +11,7 @@ venv/
 # Downloaded or generated data. Provenance JSON stays trackable so a
 # public MUStARD file hash can be committed. Do not ignore that directory.
 # SARC, SemEval, and MUStARD++ text must not be committed.
-/data/
+data/
 outputs/data/
 outputs/wavs/
 outputs/audio/

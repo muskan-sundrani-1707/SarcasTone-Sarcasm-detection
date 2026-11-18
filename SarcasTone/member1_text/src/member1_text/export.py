@@ -37,7 +37,14 @@ def export_embeddings(
     tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
     assert_tokenizer_matches_model(model.model_name, tokenizer)
     model.eval()
-    dataset = ExampleDataset(examples, tokenizer, model.max_length, model.model_name)
+    dataset = ExampleDataset(
+        examples,
+        tokenizer,
+        model.max_length,
+        model.model_name,
+        label_map=model.label_map,
+        task_type=model.task_type,
+    )
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
