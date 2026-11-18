@@ -15,12 +15,15 @@ SarcasTone trains the sarcasm classifier on sarcasm-labelled speech and uses oth
 ## Commands
 
 ```powershell
-.\.venv\Scripts\python.exe datasets\acquire.py --annotations --list-manual
-.\.venv\Scripts\python.exe datasets\acquire.py --semeval
-.\.venv\Scripts\python.exe -m member1_text.build_manifest
+.\.venv\Scripts\python.exe datasets\acquire.py --annotations --semeval --list-manual
 ```
 
-Raw files are gitignored. Television clips from MUStARD and MUStARD++ stay on your machine.
+This downloads the MUStARD and MUStARD++ annotations and SemEval files, then
+prints manual download instructions for audio/video and datasets the script
+does not download. Dataset loaders are available under
+`member1_text/src/datasets/`; there is no manifest-building command yet.
+Raw files are gitignored. Television clips from MUStARD and MUStARD++ stay on
+your machine.
 
 ## Licenses
 

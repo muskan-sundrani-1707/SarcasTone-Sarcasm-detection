@@ -40,12 +40,15 @@ def test_interface_contract_matches_shared_constants() -> None:
         assert INTERFACE_SUMMARY[name] == str(shape).replace("'", "")
 
     assert contract["sample_rate_hz"] == TARGET_SAMPLE_RATE
+    assert int(INTERFACE_SUMMARY["sample_rate_hz"]) == TARGET_SAMPLE_RATE
     assert contract["label_index"] == dict(enumerate(SARCASM_LABELS))
     assert contract["mask_convention"] == "true_means_valid"
 
 
 def test_project_names_are_consistent() -> None:
-    metadata = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    metadata = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
     project = yaml.safe_load(
         (PROJECT_ROOT / "configs" / "project.yaml").read_text(encoding="utf-8")
     )
