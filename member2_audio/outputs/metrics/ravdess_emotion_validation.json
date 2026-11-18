@@ -1,0 +1,9 @@
+{
+    "accuracy": 0.475,
+    "macro_f1": 0.45059876877665134,
+    "weighted_f1": 0.46904448379654406,
+    "training_samples": 960,
+    "validation_samples": 240,
+    "feature_count": 116,
+    "model": "RandomForestClassifier"
+}

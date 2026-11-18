@@ -1,0 +1,101 @@
+feature,selection_count,selected_folds,stability_percentage
+mel_5_mean,5,"1, 2, 3, 4, 5",100.0
+mfcc_11_mean,5,"1, 2, 3, 4, 5",100.0
+mel_14_mean,4,"1, 2, 4, 5",80.0
+mel_16_mean,4,"1, 2, 4, 5",80.0
+mel_17_mean,4,"1, 2, 4, 5",80.0
+mel_6_mean,4,"1, 2, 4, 5",80.0
+mel_9_mean,4,"1, 2, 4, 5",80.0
+rms_energy_mean,4,"2, 3, 4, 5",80.0
+mel_10_std,3,"1, 3, 5",60.0
+mel_11_mean,3,"1, 2, 4",60.0
+mel_15_mean,3,"2, 4, 5",60.0
+mel_18_mean,3,"2, 4, 5",60.0
+mel_20_mean,3,"1, 2, 5",60.0
+mel_22_mean,3,"1, 2, 4",60.0
+mel_24_mean,3,"2, 3, 5",60.0
+mel_28_mean,3,"1, 2, 5",60.0
+mel_33_mean,3,"1, 3, 4",60.0
+mel_33_std,3,"1, 3, 4",60.0
+mel_3_mean,3,"1, 2, 5",60.0
+mel_8_mean,3,"2, 4, 5",60.0
+mfcc_13_std,3,"2, 3, 5",60.0
+mfcc_1_mean,3,"2, 3, 4",60.0
+rms_energy_std,3,"3, 4, 5",60.0
+spectral_centroid_std,3,"1, 3, 4",60.0
+zero_crossing_rate_std,3,"1, 2, 4",60.0
+mel_11_std,2,"2, 5",40.0
+mel_13_mean,2,"1, 5",40.0
+mel_14_std,2,"1, 4",40.0
+mel_17_std,2,"3, 5",40.0
+mel_19_mean,2,"2, 5",40.0
+mel_19_std,2,"1, 3",40.0
+mel_1_mean,2,"3, 4",40.0
+mel_20_std,2,"3, 5",40.0
+mel_21_mean,2,"2, 5",40.0
+mel_25_mean,2,"2, 3",40.0
+mel_25_std,2,"4, 5",40.0
+mel_28_std,2,"3, 4",40.0
+mel_29_mean,2,"3, 5",40.0
+mel_2_mean,2,"1, 2",40.0
+mel_30_std,2,"3, 5",40.0
+mel_32_mean,2,"4, 5",40.0
+mel_32_std,2,"1, 4",40.0
+mel_34_mean,2,"2, 3",40.0
+mel_37_std,2,"3, 4",40.0
+mel_38_std,2,"1, 3",40.0
+mel_39_mean,2,"2, 5",40.0
+mel_39_std,2,"1, 5",40.0
+mel_40_mean,2,"4, 5",40.0
+mel_40_std,2,"1, 5",40.0
+mel_4_mean,2,"1, 2",40.0
+mel_5_std,2,"2, 4",40.0
+mel_6_std,2,"2, 4",40.0
+mfcc_10_mean,2,"2, 3",40.0
+mfcc_11_std,2,"3, 5",40.0
+mfcc_12_std,2,"1, 4",40.0
+mfcc_13_mean,2,"1, 3",40.0
+mfcc_2_std,2,"1, 2",40.0
+mfcc_3_std,2,"1, 2",40.0
+mfcc_5_mean,2,"2, 4",40.0
+mfcc_5_std,2,"1, 5",40.0
+mfcc_6_std,2,"4, 5",40.0
+mfcc_7_std,2,"1, 2",40.0
+mfcc_8_mean,2,"1, 5",40.0
+pitch_f0_mean,2,"3, 4",40.0
+pitch_f0_std,2,"3, 5",40.0
+mel_10_mean,1,4,20.0
+mel_12_std,1,1,20.0
+mel_13_std,1,3,20.0
+mel_15_std,1,2,20.0
+mel_18_std,1,5,20.0
+mel_1_std,1,3,20.0
+mel_21_std,1,3,20.0
+mel_22_std,1,1,20.0
+mel_23_mean,1,1,20.0
+mel_24_std,1,4,20.0
+mel_26_mean,1,3,20.0
+mel_26_std,1,5,20.0
+mel_27_mean,1,1,20.0
+mel_27_std,1,3,20.0
+mel_29_std,1,3,20.0
+mel_2_std,1,1,20.0
+mel_30_mean,1,3,20.0
+mel_31_std,1,3,20.0
+mel_34_std,1,3,20.0
+mel_35_mean,1,3,20.0
+mel_36_std,1,4,20.0
+mel_38_mean,1,2,20.0
+mel_4_std,1,2,20.0
+mel_7_mean,1,4,20.0
+mel_9_std,1,2,20.0
+mfcc_1_std,1,3,20.0
+mfcc_2_mean,1,4,20.0
+mfcc_4_mean,1,4,20.0
+mfcc_6_mean,1,2,20.0
+mfcc_7_mean,1,3,20.0
+mfcc_9_std,1,1,20.0
+spectral_centroid_mean,1,4,20.0
+spectral_rolloff_mean,1,5,20.0
+spectral_rolloff_std,1,3,20.0
+zero_crossing_rate_mean,1,1,20.0
