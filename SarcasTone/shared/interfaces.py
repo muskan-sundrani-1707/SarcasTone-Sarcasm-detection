@@ -87,4 +87,5 @@ INTERFACE_SUMMARY = {
     "prosody": f"[B, {PROSODY_DIM}]",
     "quality": f"[B, {QUALITY_DIM}]",
     "fusion_logits": f"[B, {FUSION_LOGITS}]",
+    "sample_rate_hz": str(TARGET_SAMPLE_RATE),
 }
