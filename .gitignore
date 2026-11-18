@@ -21,3 +21,24 @@ __pycache__/
 
 # ML experiment tracking
 mlruns/
+
+# Member 2: Audio datasets and generated data
+member2_audio/data/raw/
+member2_audio/data/processed/
+member2_audio/checkpoints/
+
+# Large embedding files
+*.npz
+*.npy
+
+# Python cache
+**/__pycache__/
+*.py[cod]
+
+# Model and experiment artifacts
+*.joblib
+*.pkl
+
+# Local environment and secrets
+.env
+.env.*
