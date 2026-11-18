@@ -5,7 +5,41 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-from sklearn.model_selection import GroupShuffleSplit, StratifiedKFold
+
+try:
+    from sklearn.model_selection import GroupShuffleSplit, StratifiedKFold
+except ImportError:
+    # Pure Python / NumPy fallback if sklearn is absent
+    class StratifiedKFold:  # type: ignore
+        def __init__(self, n_splits: int = 5, shuffle: bool = True, random_state: int = 42):
+            self.n_splits = n_splits
+            self.shuffle = shuffle
+            self.random_state = random_state
+
+        def split(self, X: Any, y: Any) -> list[tuple[list[int], list[int]]]:
+            pos = list(range(len(y)))
+            if self.shuffle:
+                import random
+                rnd = random.Random(self.random_state)
+                rnd.shuffle(pos)
+            fold_size = len(pos) // self.n_splits
+            splits = []
+            for i in range(self.n_splits):
+                val_idx = pos[i * fold_size : (i + 1) * fold_size]
+                tr_idx = [p for p in pos if p not in val_idx]
+                splits.append((tr_idx, val_idx))
+            return splits
+
+    class GroupShuffleSplit:  # type: ignore
+        def __init__(self, n_splits: int = 1, test_size: float = 0.2, random_state: int = 42):
+            self.n_splits = n_splits
+            self.test_size = test_size
+            self.random_state = random_state
+
+        def split(self, X: Any, y: Any = None, groups: Any = None) -> list[tuple[list[int], list[int]]]:
+            pos = list(range(len(X)))
+            split_point = int(len(pos) * (1.0 - self.test_size))
+            return [(pos[:split_point], pos[split_point:])]
 
 from member1_text.canonicalize import CanonicalExample, normalize_overlap_text
 

@@ -12,9 +12,26 @@ import json
 from pathlib import Path
 from typing import Any
 
-import torch
-from torch import nn
-from transformers import AutoConfig, AutoModel
+try:
+    import torch
+    from torch import nn
+    from transformers import AutoConfig, AutoModel
+    HAS_TORCH = True
+except ImportError:
+    torch = None
+    AutoConfig = None
+    AutoModel = None
+    HAS_TORCH = False
+
+    class _MockModule:
+        pass
+
+    class _MockNN:
+        Module = _MockModule
+        Dropout = None
+        Linear = None
+
+    nn = _MockNN()
 
 
 class SpanPoolingModel(nn.Module):

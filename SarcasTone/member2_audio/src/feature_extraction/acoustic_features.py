@@ -138,7 +138,15 @@ def extract_prosody_features(audio_path: str | Path) -> tuple[np.ndarray, dict[s
     rms_std = float(np.std(rms)) if len(rms) > 0 else 0.0
     rms_max = float(np.max(rms)) if len(rms) > 0 else 0.0
     rms_min = float(np.min(rms)) if len(rms) > 0 else 0.0
-    energy_dynamic_range_db = float(20.0 * np.log10(max(rms_max, 1e-7) / max(rms_min, 1e-7)))
+
+    # Active speech dynamic range (P90 vs P10 among active frames to prevent silence floor bias)
+    active_rms = rms[rms > max(0.15 * rms_mean, 0.005)]
+    if len(active_rms) >= 5:
+        p90 = float(np.percentile(active_rms, 90))
+        p10 = float(np.percentile(active_rms, 10))
+        energy_dynamic_range_db = float(20.0 * np.log10(max(p90, 1e-6) / max(p10, 1e-6)))
+    else:
+        energy_dynamic_range_db = float(20.0 * np.log10(max(rms_max, 1e-7) / max(rms_min, 1e-7)))
     shimmer_proxy = float(np.mean(np.abs(np.diff(rms))) / (rms_mean + 1e-6)) if len(rms) >= 2 else 0.0
     emphasis_proxy = float(np.mean(rms > (rms_mean + rms_std))) if len(rms) > 0 else 0.0
 

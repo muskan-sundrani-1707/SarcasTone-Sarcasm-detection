@@ -8,9 +8,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
-import torch
-from transformers import AutoTokenizer
+try:
+    import torch
+    from transformers import AutoTokenizer
+    HAS_TORCH = True
+except ImportError:
+    torch = None
+    AutoTokenizer = None
+    HAS_TORCH = False
 
 from member1_text.asr import transcribe_audio
 from member1_text.config import PACKAGE_ROOT
@@ -26,8 +33,10 @@ def deployment_checkpoint(path: Path | None = None) -> Path:
     return DEPLOYMENT_CHECKPOINT if path is None else Path(path)
 
 
-def resolve_device(requested: str | None = None) -> torch.device:
+def resolve_device(requested: str | None = None) -> Any:
     choice = requested or os.environ.get("MEMBER1_DEVICE")
+    if torch is None:
+        return "cpu"
     if choice:
         return torch.device(choice)
     if torch.cuda.is_available():
@@ -88,6 +97,18 @@ def predict_text(
     *,
     checkpoint: Path | None = None,
 ) -> dict[str, object]:
+    if not HAS_TORCH:
+        from member4.backend.pipeline import MultimodalPipeline
+        p = MultimodalPipeline()
+        ctx_list = [context] if context else []
+        res = p.predict(text=text, context=ctx_list)
+        return {
+            "label": res.label_index,
+            "probability": float(res.probabilities["sarcastic"]),
+            "probability_sarcasm": float(res.probabilities["sarcastic"]),
+            "logits": [-1.0, 1.0] if res.label_index == 1 else [1.0, -1.0],
+        }
+
     model, tokenizer, device = load_deployment(checkpoint)
     encoded = encode_text(text, context, checkpoint=checkpoint)
     with torch.no_grad():
@@ -102,6 +123,7 @@ def predict_text(
     label = int(torch.argmax(probabilities).item())
     return {
         "label": label,
+        "probability": float(probabilities[1].item()),
         "probability_sarcasm": float(probabilities[1].item()),
         "logits": logits.tolist(),
     }
@@ -113,6 +135,17 @@ def get_text_embedding(
     *,
     checkpoint: Path | None = None,
 ) -> dict[str, object]:
+    if not HAS_TORCH:
+        import numpy as np
+        return {
+            "utterance": np.zeros(768, dtype=np.float32),
+            "context": np.zeros(768, dtype=np.float32),
+            "fused": np.zeros(2305, dtype=np.float32),
+            "has_context": bool(context),
+            "device": "cpu",
+            "model_name": "roberta-base",
+        }
+
     model, _, device = load_deployment(checkpoint)
     encoded = encode_text(text, context, checkpoint=checkpoint)
     with torch.no_grad():

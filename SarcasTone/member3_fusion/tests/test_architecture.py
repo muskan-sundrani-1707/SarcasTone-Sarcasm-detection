@@ -22,17 +22,34 @@ import sys
 from pathlib import Path
 
 # Insert repo root so we can import from shared and member3_fusion
-_REPO = Path(__file__).resolve().parents[3]
+_REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 _M3 = _REPO / "member3_fusion" / "src"
 if str(_M3.parent) not in sys.path:
     sys.path.insert(0, str(_M3.parent))
+if str(_M3) not in sys.path:
+    sys.path.insert(0, str(_M3))
 
-import pytest
-import torch
-import torch.nn as nn
-import numpy as np
+import unittest
+
+try:
+    import pytest
+except ImportError:
+    pytest = None
+
+try:
+    import torch
+    import torch.nn as nn
+    import numpy as np
+except ImportError:
+    torch = None
+    nn = None
+    np = None
+
+if pytest is None or torch is None or np is None:
+    raise unittest.SkipTest("pytest, torch, and numpy are required to run member3 architecture tests.")
+
 
 from shared.constants import (
     TEXT_HIDDEN, AUDIO_HIDDEN, PROSODY_DIM, QUALITY_DIM,

@@ -37,7 +37,7 @@ from typing import Optional
 import numpy as np
 import torch
 
-_REPO = Path(__file__).resolve().parents[5]
+_REPO = Path(__file__).resolve().parents[3]
 _M3   = _REPO / "member3_fusion"
 for _p in [str(_REPO), str(_M3), str(_M3 / "src")]:
     if _p not in sys.path:

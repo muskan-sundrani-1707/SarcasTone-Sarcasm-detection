@@ -107,6 +107,43 @@ class MultimodalSyncTest(unittest.TestCase):
         self.assertTrue(all(v == 0.0 for v in bundle.prosody))
         self.assertTrue(all(v == 0.0 for v in bundle.quality))
 
+    def test_member3_fusion_synchronization(self) -> None:
+        """Verify that Member 3 fusion configuration and dataset loader align with Member 1 & 2."""
+        import sys
+        import yaml
+        repo_root = Path(__file__).resolve().parents[1]
+        for p in [str(repo_root), str(repo_root / "member3_fusion"), str(repo_root / "member3_fusion" / "src")]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
+        # 1. Config contract match
+        fusion_cfg_path = repo_root / "member3_fusion" / "configs" / "fusion_config.yaml"
+        self.assertTrue(fusion_cfg_path.is_file())
+        cfg = yaml.safe_load(fusion_cfg_path.read_text(encoding="utf-8"))
+        iface = cfg["interface"]
+        self.assertEqual(iface["text_hidden"], TEXT_HIDDEN)
+        self.assertEqual(iface["audio_hidden"], AUDIO_HIDDEN)
+        self.assertEqual(iface["context_hidden"], TEXT_HIDDEN)
+        self.assertEqual(iface["prosody_dim"], PROSODY_DIM)
+        self.assertEqual(iface["quality_dim"], QUALITY_DIM)
+        self.assertEqual(iface["fusion_logits"], 2)
+
+        # 2. Member 3 dataset loading using Member 1 JSON and Member 2 handoff
+        from member3_fusion.src.training.dataset import load_mustard_fusion_records
+        d_cfg = cfg["data"]
+        splits, acoustic_dim = load_mustard_fusion_records(
+            mustard_json_path=repo_root / d_cfg["mustard_json"],
+            handoff_csv_path=repo_root / d_cfg["audio_handoff_csv"],
+            quality_csv_path=repo_root / d_cfg["audio_quality_csv"],
+            predictions_csv_path=repo_root / d_cfg["audio_predictions_csv"],
+            split_strategy="speaker",
+        )
+        total_records = sum(len(v) for v in splits.values())
+        self.assertEqual(total_records, 690)
+        self.assertIn("train", splits)
+        self.assertIn("val", splits)
+        self.assertIn("test", splits)
+
 
 if __name__ == "__main__":
     unittest.main()
